@@ -7,3 +7,5 @@ langchain-groq==0.1.4
 sentence-transformers==2.6.1
 python-dotenv==1.0.1
 pypdf==4.2.0
+numpy==1.26.4
+faiss-cpu==1.11.0
