@@ -37,6 +37,11 @@ Question:
 
 logger = logging.getLogger(__name__)
 
+DEPRECATED_GROQ_MODELS = {
+    "llama3-8b-8192": "llama-3.1-8b-instant",
+    "llama3-70b-8192": "llama-3.3-70b-versatile",
+}
+
 
 @st.cache_resource(show_spinner=False)
 def get_vectorstore():
@@ -138,12 +143,19 @@ def get_config_value(key, default=""):
         return default
 
 
+def resolve_groq_model_name(raw_model_name):
+    normalized = (raw_model_name or "").strip()
+    if not normalized:
+        return "llama-3.1-8b-instant"
+    return DEPRECATED_GROQ_MODELS.get(normalized, normalized)
+
+
 def build_user_friendly_error(exc):
     msg = str(exc).lower()
     if any(token in msg for token in ["api key", "authentication", "unauthorized", "401"]):
         return "Groq API key is missing or invalid. Set GROQ_API_KEY in Streamlit Secrets and redeploy."
-    if "model" in msg and any(token in msg for token in ["not found", "does not exist", "unsupported"]):
-        return "The selected Groq model is unavailable for this account. Set GROQ_MODEL_NAME to llama3-8b-8192 in Secrets."
+    if "model" in msg and any(token in msg for token in ["not found", "does not exist", "unsupported", "decommissioned"]):
+        return "The selected Groq model is unavailable/decommissioned. Set GROQ_MODEL_NAME to llama-3.1-8b-instant in Streamlit Secrets."
     if any(token in msg for token in ["rate limit", "quota", "429"]):
         return "Groq rate limit reached. Please wait a minute and try again."
     compact = str(exc).strip().replace("\n", " ")
@@ -319,7 +331,7 @@ def main():
             hero_image_path = next((p for p in candidate_paths if os.path.exists(p)), None)
 
             if hero_image_path:
-                st.image(hero_image_path, use_column_width=True)
+                st.image(hero_image_path, use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("<div class='hero-image-gap-bottom'></div>", unsafe_allow_html=True)
 
@@ -376,7 +388,7 @@ def main():
                 st.session_state.messages.append({'role':'assistant', 'content': result})
                 return
 
-            GROQ_MODEL_NAME = get_config_value("GROQ_MODEL_NAME", "llama3-8b-8192")
+            GROQ_MODEL_NAME = resolve_groq_model_name(get_config_value("GROQ_MODEL_NAME", "llama-3.1-8b-instant"))
             llm = ChatGroq(
                 model=GROQ_MODEL_NAME,
                 temperature=0.5,
