@@ -146,7 +146,10 @@ def build_user_friendly_error(exc):
         return "The selected Groq model is unavailable for this account. Set GROQ_MODEL_NAME to llama3-8b-8192 in Secrets."
     if any(token in msg for token in ["rate limit", "quota", "429"]):
         return "Groq rate limit reached. Please wait a minute and try again."
-    return "Sorry, I couldn't process that request right now. Please try again."
+    compact = str(exc).strip().replace("\n", " ")
+    if len(compact) > 220:
+        compact = compact[:220] + "..."
+    return f"Backend request failed: {compact}"
 
 
 def inject_custom_css():
@@ -281,6 +284,8 @@ def main():
     with st.sidebar:
         st.markdown("### 🩺 AI Medical Assistant")
         st.caption("Clinical Q&A assistant")
+        if not get_config_value("GROQ_API_KEY", ""):
+            st.warning("Missing GROQ_API_KEY in Streamlit Secrets.")
         if st.button("🧹 Clear Chat", use_container_width=True):
             st.session_state.messages = []
             st.rerun()
