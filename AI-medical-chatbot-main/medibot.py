@@ -318,22 +318,21 @@ def main():
     if 'quick_prompt' not in st.session_state:
         st.session_state.quick_prompt = ""
 
-    if not st.session_state.messages:
-        st.markdown("<div class='hero-image-gap-top'></div>", unsafe_allow_html=True)
-        img_col1, img_col2, img_col3 = st.columns([1, 2, 1])
-        with img_col2:
-            st.markdown("<div class='hero-image-wrap'>", unsafe_allow_html=True)
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            candidate_paths = [
-                os.path.join(current_dir, "assets", "ai_doctor.png"),
-                os.path.join(current_dir, "assests", "ai_doctor.png"),
-            ]
-            hero_image_path = next((p for p in candidate_paths if os.path.exists(p)), None)
+    st.markdown("<div class='hero-image-gap-top'></div>", unsafe_allow_html=True)
+    img_col1, img_col2, img_col3 = st.columns([1, 2, 1])
+    with img_col2:
+        st.markdown("<div class='hero-image-wrap'>", unsafe_allow_html=True)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        candidate_paths = [
+            os.path.join(current_dir, "assets", "ai_doctor.png"),
+            os.path.join(current_dir, "assests", "ai_doctor.png"),
+        ]
+        hero_image_path = next((p for p in candidate_paths if os.path.exists(p)), None)
 
-            if hero_image_path:
-                st.image(hero_image_path, use_container_width=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown("<div class='hero-image-gap-bottom'></div>", unsafe_allow_html=True)
+        if hero_image_path:
+            st.image(hero_image_path, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<div class='hero-image-gap-bottom'></div>", unsafe_allow_html=True)
 
     selected_prompt = None
     st.markdown("#### Quick Prompts")
