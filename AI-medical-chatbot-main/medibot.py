@@ -1,6 +1,7 @@
 import os
 import html
 import re
+import logging
 import streamlit as st
 
 from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
@@ -33,6 +34,8 @@ Context:
 Question:
 {input}
 """
+
+logger = logging.getLogger(__name__)
 
 
 @st.cache_resource(show_spinner=False)
@@ -123,6 +126,27 @@ def clean_assistant_response(text):
     cleaned = re.sub(r"^\s*(answer|final answer)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = cleaned.strip()
     return cleaned or "Sorry, I could not generate a response right now."
+
+
+def get_config_value(key, default=""):
+    value = os.environ.get(key)
+    if value:
+        return value
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+
+def build_user_friendly_error(exc):
+    msg = str(exc).lower()
+    if any(token in msg for token in ["api key", "authentication", "unauthorized", "401"]):
+        return "Groq API key is missing or invalid. Set GROQ_API_KEY in Streamlit Secrets and redeploy."
+    if "model" in msg and any(token in msg for token in ["not found", "does not exist", "unsupported"]):
+        return "The selected Groq model is unavailable for this account. Set GROQ_MODEL_NAME to llama3-8b-8192 in Secrets."
+    if any(token in msg for token in ["rate limit", "quota", "429"]):
+        return "Groq rate limit reached. Please wait a minute and try again."
+    return "Sorry, I couldn't process that request right now. Please try again."
 
 
 def inject_custom_css():
@@ -340,12 +364,14 @@ def main():
         st.session_state.messages.append({'role':'user', 'content': prompt})
                 
         try: 
-            GROQ_API_KEY = os.environ.get("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
+            GROQ_API_KEY = get_config_value("GROQ_API_KEY", "")
             if not GROQ_API_KEY:
-                st.error("GROQ_API_KEY is not set. Add it in your environment or .env file.")
+                result = "Groq API key is not configured. Add GROQ_API_KEY in Streamlit Secrets."
+                render_chat_bubble('assistant', result)
+                st.session_state.messages.append({'role':'assistant', 'content': result})
                 return
 
-            GROQ_MODEL_NAME = "llama-3.1-8b-instant"  # Change to any supported Groq model
+            GROQ_MODEL_NAME = get_config_value("GROQ_MODEL_NAME", "llama3-8b-8192")
             llm = ChatGroq(
                 model=GROQ_MODEL_NAME,
                 temperature=0.5,
@@ -383,7 +409,8 @@ def main():
             st.session_state.messages.append({'role':'assistant', 'content': result})
 
         except Exception as e:
-            result = clean_assistant_response("Sorry, I couldn't process that request right now. Please try again.")
+            logger.exception("Chat request failed")
+            result = clean_assistant_response(build_user_friendly_error(e))
             render_chat_bubble('assistant', result)
             st.session_state.messages.append({'role':'assistant', 'content': result})
 
