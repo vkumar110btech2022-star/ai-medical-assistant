@@ -1,7 +1,10 @@
 import os
 import html
+import re
 import streamlit as st
 
+from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import ChatPromptTemplate
@@ -15,7 +18,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-DB_FAISS_PATH="vectorstore/db_faiss"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FAISS_PATH = os.path.join(BASE_DIR, "vectorstore", "db_faiss")
+DATA_PATH = os.path.join(BASE_DIR, "data")
 
 
 RAG_PROMPT_TEMPLATE = """You are a helpful medical reference assistant.
@@ -30,11 +35,30 @@ Question:
 """
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def get_vectorstore():
     embedding_model=HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
+    ensure_vectorstore_exists(embedding_model)
     db=FAISS.load_local(DB_FAISS_PATH, embedding_model, allow_dangerous_deserialization=True)
     return db
+
+
+def ensure_vectorstore_exists(embedding_model):
+    index_path = os.path.join(DB_FAISS_PATH, "index.faiss")
+    metadata_path = os.path.join(DB_FAISS_PATH, "index.pkl")
+    if os.path.exists(index_path) and os.path.exists(metadata_path):
+        return
+
+    os.makedirs(DB_FAISS_PATH, exist_ok=True)
+    loader = DirectoryLoader(DATA_PATH, glob='*.pdf', loader_cls=PyPDFLoader)
+    documents = loader.load()
+    if not documents:
+        raise RuntimeError("No PDF files found in data folder to build vectorstore.")
+
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    chunks = splitter.split_documents(documents)
+    db = FAISS.from_documents(chunks, embedding_model)
+    db.save_local(DB_FAISS_PATH)
 
 
 def set_custom_prompt(custom_prompt_template):
@@ -88,6 +112,19 @@ def needs_fallback(answer_text, retrieved_context=None):
     return any(phrase in normalized for phrase in weak_phrases)
 
 
+def clean_assistant_response(text):
+    if not text:
+        return "Sorry, I could not generate a response right now."
+
+    cleaned = text.strip()
+    # Hide reasoning tags if a model emits internal thoughts.
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = re.sub(r"^\s*(#{1,6}\s*)?(thinking|thought process|thought|reasoning)\s*:?\s*$", "", cleaned, flags=re.IGNORECASE | re.MULTILINE)
+    cleaned = re.sub(r"^\s*(answer|final answer)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip()
+    return cleaned or "Sorry, I could not generate a response right now."
+
+
 def inject_custom_css():
     st.markdown(
         """
@@ -104,7 +141,7 @@ def inject_custom_css():
             }
 
             .main .block-container {
-                max-width: 900px;
+                max-width: 775px;
                 margin: 0 auto;
                 padding-top: 2rem;
                 padding-bottom: 2rem;
@@ -251,10 +288,9 @@ def main():
                 os.path.join(current_dir, "assests", "ai_doctor.png"),
             ]
             hero_image_path = next((p for p in candidate_paths if os.path.exists(p)), None)
-            print(f"[DEBUG] Hero image path: {hero_image_path}")
 
             if hero_image_path:
-                st.image(hero_image_path, use_container_width=True)
+                st.image(hero_image_path, use_column_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("<div class='hero-image-gap-bottom'></div>", unsafe_allow_html=True)
 
@@ -304,7 +340,7 @@ def main():
         st.session_state.messages.append({'role':'user', 'content': prompt})
                 
         try: 
-            GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+            GROQ_API_KEY = os.environ.get("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
             if not GROQ_API_KEY:
                 st.error("GROQ_API_KEY is not set. Add it in your environment or .env file.")
                 return
@@ -324,30 +360,32 @@ def main():
                 else:
                     vectorstore=get_vectorstore()
                     if vectorstore is None:
-                        st.error("Failed to load the vector store")
-                        return
-                    
-                    retrieval_qa_chat_prompt = set_custom_prompt(RAG_PROMPT_TEMPLATE)
+                        result = "Sorry, I could not load the medical knowledge base right now."
+                    else:
+                        retrieval_qa_chat_prompt = set_custom_prompt(RAG_PROMPT_TEMPLATE)
 
-                    # Document combiner chain (stuff documents into prompt)
-                    combine_docs_chain = create_stuff_documents_chain(llm, retrieval_qa_chat_prompt)
+                        # Document combiner chain (stuff documents into prompt)
+                        combine_docs_chain = create_stuff_documents_chain(llm, retrieval_qa_chat_prompt)
 
-                    # Retrieval chain (retriever + doc combiner)
-                    rag_chain = create_retrieval_chain(vectorstore.as_retriever(search_kwargs={'k': 3}), combine_docs_chain)
+                        # Retrieval chain (retriever + doc combiner)
+                        rag_chain = create_retrieval_chain(vectorstore.as_retriever(search_kwargs={'k': 3}), combine_docs_chain)
 
-                    response=rag_chain.invoke({'input': prompt})
-                    result = response.get("answer", "")
-                    retrieved_context = response.get("context", [])
+                        response=rag_chain.invoke({'input': prompt})
+                        result = response.get("answer", "")
+                        retrieved_context = response.get("context", [])
 
-                    if needs_fallback(result, retrieved_context):
-                        fallback = llm.invoke(prompt)
-                        result = getattr(fallback, "content", str(fallback)).strip()
+                        if needs_fallback(result, retrieved_context):
+                            fallback = llm.invoke(prompt)
+                            result = getattr(fallback, "content", str(fallback)).strip()
 
+            result = clean_assistant_response(result)
             render_chat_bubble('assistant', result)
             st.session_state.messages.append({'role':'assistant', 'content': result})
 
         except Exception as e:
-            st.error(f"Error: {str(e)}")
+            result = clean_assistant_response("Sorry, I couldn't process that request right now. Please try again.")
+            render_chat_bubble('assistant', result)
+            st.session_state.messages.append({'role':'assistant', 'content': result})
 
 if __name__ == "__main__":
     main()
